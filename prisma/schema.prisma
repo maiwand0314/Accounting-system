@@ -1,0 +1,478 @@
+// Regnskap & Lager MVP — single-company, multi-tenant-ready (companyId on all entities)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  OWNER
+  ACCOUNTANT
+  EMPLOYEE
+}
+
+enum EntityType {
+  AS
+  ENK
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum VatRate {
+  STANDARD_25
+  REDUCED_15
+  REDUCED_12
+  ZERO
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum LineItemType {
+  PRODUCT
+  SERVICE
+}
+
+enum StockMovementType {
+  PURCHASE
+  SALE
+  RETURN_IN
+  RETURN_OUT
+  ADJUSTMENT
+}
+
+enum JournalSourceType {
+  INVOICE
+  INVOICE_PAYMENT
+  EXPENSE
+  STOCK_MOVEMENT
+  MANUAL
+  OPENING_BALANCE
+}
+
+enum CustomerType {
+  BUSINESS
+  PRIVATE
+}
+
+enum AuditAction {
+  LOGIN
+  INVOICE_CREATED
+  INVOICE_PAID
+  EXPENSE_CREATED
+  JOURNAL_POSTED
+  INVENTORY_ADJUSTED
+  USER_UPDATED
+}
+
+// ─── Company (single business; companyId scales to multi-tenant later) ───────
+
+model Company {
+  id              String     @id @default(cuid())
+  name            String
+  orgNumber       String     @unique
+  vatNumber       String?
+  entityType      EntityType @default(AS)
+  address         String?
+  city            String?
+  postalCode      String?
+  country         String     @default("NO")
+  currency        String     @default("NOK")
+  fiscalYearStart Int        @default(1)
+  email           String?
+  phone           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  users            User[]
+  accounts         Account[]
+  journalEntries   JournalEntry[]
+  customers        Customer[]
+  vendors          Vendor[]
+  products         Product[]
+  productCategories ProductCategory[]
+  invoices         Invoice[]
+  expenses         Expense[]
+  stockMovements   StockMovement[]
+  inventoryLayers  InventoryLayer[]
+  auditLogs        AuditLog[]
+  invoiceSequences InvoiceSequence[]
+  receipts         Receipt[]
+}
+
+// ─── Users (linked to Supabase Auth) ─────────────────────────────────────────
+
+model User {
+  id         String   @id @default(cuid())
+  supabaseId String   @unique
+  email      String   @unique
+  fullName   String
+  role       UserRole @default(EMPLOYEE)
+  companyId  String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  company        Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  auditLogs      AuditLog[]
+  journalEntries JournalEntry[] @relation("JournalCreatedBy")
+  expenses       Expense[]      @relation("ExpenseCreatedBy")
+
+  @@index([companyId])
+}
+
+// ─── Chart of accounts (NS 4102-inspired) ────────────────────────────────────
+
+model Account {
+  id          String      @id @default(cuid())
+  companyId   String
+  code        String
+  name        String
+  type        AccountType
+  description String?
+  isSystem    Boolean     @default(false)
+  isActive    Boolean     @default(true)
+  parentId    String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parent       Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children     Account[]     @relation("AccountHierarchy")
+  journalLines JournalLine[]
+  expenses     Expense[]
+
+  @@unique([companyId, code])
+  @@index([companyId, type])
+}
+
+// ─── Double-entry journal ─────────────────────────────────────────────────────
+
+model JournalEntry {
+  id          String            @id @default(cuid())
+  companyId   String
+  entryNumber String
+  date        DateTime          @db.Date
+  description String
+  sourceType  JournalSourceType
+  sourceId    String?
+  isPosted    Boolean           @default(true)
+  createdById String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  company   Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User          @relation("JournalCreatedBy", fields: [createdById], references: [id])
+  lines     JournalLine[]
+
+  @@unique([companyId, entryNumber])
+  @@index([companyId, date])
+  @@index([companyId, sourceType, sourceId])
+}
+
+model JournalLine {
+  id             String   @id @default(cuid())
+  journalEntryId String
+  accountId      String
+  debit          Decimal  @default(0) @db.Decimal(19, 4)
+  credit         Decimal  @default(0) @db.Decimal(19, 4)
+  description    String?
+  vatRate        VatRate?
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account      Account      @relation(fields: [accountId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([accountId])
+}
+
+model JournalSequence {
+  companyId  String
+  year       Int
+  lastNumber Int    @default(0)
+
+  @@id([companyId, year])
+}
+
+// ─── Customers ───────────────────────────────────────────────────────────────
+
+model Customer {
+  id          String       @id @default(cuid())
+  companyId   String
+  type        CustomerType @default(BUSINESS)
+  name        String
+  orgNumber   String?
+  vatNumber   String?
+  email       String?
+  phone       String?
+  address     String?
+  city        String?
+  postalCode  String?
+  country     String       @default("NO")
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+
+  @@index([companyId])
+}
+
+// ─── Vendors (Phase 4) ───────────────────────────────────────────────────────
+
+model Vendor {
+  id         String   @id @default(cuid())
+  companyId  String
+  name       String
+  orgNumber  String?
+  vatNumber  String?
+  email      String?
+  phone      String?
+  address    String?
+  city       String?
+  postalCode String?
+  country    String   @default("NO")
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+
+  @@index([companyId])
+}
+
+// ─── Products & inventory (Phase 2+) ───────────────────────────────────────────
+
+model ProductCategory {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  createdAt DateTime @default(now())
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([companyId, name])
+}
+
+model Product {
+  id              String   @id @default(cuid())
+  companyId       String
+  categoryId      String?
+  sku             String
+  barcode         String?
+  name            String
+  description     String?
+  costPrice       Decimal  @default(0) @db.Decimal(19, 4)
+  sellingPrice    Decimal  @default(0) @db.Decimal(19, 4)
+  quantityOnHand  Decimal  @default(0) @db.Decimal(19, 4)
+  lowStockThreshold Decimal? @db.Decimal(19, 4)
+  vatRate         VatRate  @default(STANDARD_25)
+  isService       Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  company          Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category         ProductCategory?  @relation(fields: [categoryId], references: [id])
+  stockMovements   StockMovement[]
+  inventoryLayers  InventoryLayer[]
+  invoiceLines     InvoiceLine[]
+
+  @@unique([companyId, sku])
+  @@index([companyId])
+}
+
+/// FIFO-ready cost layers; MVP uses weighted average on Product.costPrice
+model InventoryLayer {
+  id               String   @id @default(cuid())
+  companyId        String
+  productId        String
+  quantity         Decimal  @db.Decimal(19, 4)
+  unitCost         Decimal  @db.Decimal(19, 4)
+  remainingQty     Decimal  @db.Decimal(19, 4)
+  stockMovementId  String?
+  createdAt        DateTime @default(now())
+
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product       Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockMovement StockMovement? @relation(fields: [stockMovementId], references: [id])
+
+  @@index([productId, createdAt])
+}
+
+model StockMovement {
+  id          String            @id @default(cuid())
+  companyId   String
+  productId   String
+  type        StockMovementType
+  quantity    Decimal           @db.Decimal(19, 4)
+  unitCost    Decimal           @db.Decimal(19, 4)
+  totalCost   Decimal           @db.Decimal(19, 4)
+  reference   String?
+  notes       String?
+  movementDate DateTime         @default(now())
+  journalEntryId String?
+  createdAt   DateTime          @default(now())
+
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  inventoryLayers InventoryLayer[]
+
+  @@index([companyId, productId])
+}
+
+// ─── Invoices (Phase 3) ────────────────────────────────────────────────────────
+
+model Invoice {
+  id            String        @id @default(cuid())
+  companyId     String
+  customerId    String
+  invoiceNumber String
+  status        InvoiceStatus @default(DRAFT)
+  issueDate     DateTime      @db.Date
+  dueDate       DateTime      @db.Date
+  notes         String?
+  subtotal      Decimal       @default(0) @db.Decimal(19, 4)
+  vatAmount     Decimal       @default(0) @db.Decimal(19, 4)
+  total         Decimal       @default(0) @db.Decimal(19, 4)
+  paidAmount    Decimal       @default(0) @db.Decimal(19, 4)
+  paidAt        DateTime?
+  pdfUrl        String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  company  Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer Customer      @relation(fields: [customerId], references: [id])
+  lines    InvoiceLine[]
+
+  @@unique([companyId, invoiceNumber])
+  @@index([companyId, status])
+}
+
+model InvoiceLine {
+  id          String       @id @default(cuid())
+  invoiceId   String
+  lineType    LineItemType
+  productId   String?
+  description String
+  quantity    Decimal      @db.Decimal(19, 4)
+  unitPrice   Decimal      @db.Decimal(19, 4)
+  vatRate     VatRate      @default(STANDARD_25)
+  lineTotal   Decimal      @db.Decimal(19, 4)
+  vatAmount   Decimal      @db.Decimal(19, 4)
+
+  invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([invoiceId])
+}
+
+model InvoiceSequence {
+  companyId  String
+  year       Int
+  lastNumber Int @default(0)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, year])
+}
+
+// ─── Expenses (Phase 4) ────────────────────────────────────────────────────────
+
+model ExpenseCategory {
+  id        String @id @default(cuid())
+  companyId String
+  name      String
+  accountId String?
+
+  @@unique([companyId, name])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  companyId   String
+  vendorId    String?
+  accountId   String
+  createdById String
+  description String
+  amount      Decimal  @db.Decimal(19, 4)
+  vatRate     VatRate  @default(STANDARD_25)
+  vatAmount   Decimal  @default(0) @db.Decimal(19, 4)
+  total       Decimal  @db.Decimal(19, 4)
+  expenseDate DateTime @db.Date
+  receiptUrl  String?
+  ocrData     Json?
+  journalEntryId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  vendor    Vendor? @relation(fields: [vendorId], references: [id])
+  account   Account @relation(fields: [accountId], references: [id])
+  createdBy User    @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+  receipt   Receipt?
+
+  @@index([companyId, expenseDate])
+}
+
+/// OCR-ready receipt metadata
+model Receipt {
+  id           String   @id @default(cuid())
+  companyId    String
+  expenseId    String?  @unique
+  storagePath  String
+  fileName     String
+  mimeType     String
+  fileSize     Int
+  ocrStatus    String   @default("pending")
+  ocrRaw       Json?
+  vendorName   String?
+  amount       Decimal? @db.Decimal(19, 4)
+  receiptDate  DateTime?
+  createdAt    DateTime @default(now())
+
+  company Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expense Expense? @relation(fields: [expenseId], references: [id])
+}
+
+// ─── Audit log ─────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  companyId  String
+  userId     String?
+  action     AuditAction
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime    @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@index([companyId, createdAt])
+  @@index([companyId, action])
+}
