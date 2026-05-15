@@ -1,6 +1,10 @@
+import { unstable_cache } from "next/cache";
 import Decimal from "decimal.js";
 import { prisma } from "@/lib/prisma";
+import { companyTag, CACHE_TAGS } from "@/lib/cache";
 import { JournalService } from "@/server/services/accounting/journal.service";
+import { ProductService } from "@/server/services/inventory/product.service";
+import { InvoiceService } from "@/server/services/invoice/invoice.service";
 import { ACCOUNT_CODES } from "@/lib/constants/accounts";
 import { formatNOK } from "@/lib/utils";
 
@@ -12,6 +16,7 @@ export type DashboardStats = {
   outstandingCount: number;
   inventoryValue: number;
   lowStockCount: number;
+  productCount: number;
   recentJournalEntries: {
     id: string;
     entryNumber: string;
@@ -21,9 +26,9 @@ export type DashboardStats = {
   }[];
 };
 
-export class DashboardService {
-  static async getStats(companyId: string): Promise<DashboardStats> {
-    const accounts = await prisma.account.findMany({
+async function fetchDashboardStats(companyId: string): Promise<DashboardStats> {
+  const [accounts, outstandingInvoices, inventory, recentJournalEntries] = await Promise.all([
+    prisma.account.findMany({
       where: {
         companyId,
         code: {
@@ -31,81 +36,70 @@ export class DashboardService {
             ACCOUNT_CODES.SALES_GOODS,
             ACCOUNT_CODES.SALES_SERVICES,
             ACCOUNT_CODES.COGS,
-            ACCOUNT_CODES.INVENTORY,
           ],
         },
       },
-    });
-
-    const byCode = Object.fromEntries(accounts.map((a) => [a.code, a]));
-
-    const revenueGoods = byCode[ACCOUNT_CODES.SALES_GOODS]
-      ? await JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.SALES_GOODS].id)
-      : new Decimal(0);
-    const revenueServices = byCode[ACCOUNT_CODES.SALES_SERVICES]
-      ? await JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.SALES_SERVICES].id)
-      : new Decimal(0);
-    const cogs = byCode[ACCOUNT_CODES.COGS]
-      ? await JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.COGS].id)
-      : new Decimal(0);
-
-    const revenue = revenueGoods.abs().plus(revenueServices.abs());
-    const expenses = cogs.abs();
-    const profit = revenue.minus(expenses);
-
-    const outstanding = await prisma.invoice.aggregate({
-      where: {
-        companyId,
-        status: { in: ["SENT", "OVERDUE"] },
-      },
-      _sum: { total: true },
-      _count: true,
-    });
-
-    const products = await prisma.product.findMany({
-      where: { companyId, isActive: true, isService: false },
-    });
-
-    let inventoryValue = new Decimal(0);
-    let lowStockCount = 0;
-    for (const p of products) {
-      inventoryValue = inventoryValue.plus(
-        new Decimal(p.quantityOnHand.toString()).times(p.costPrice.toString()),
-      );
-      if (
-        p.lowStockThreshold &&
-        new Decimal(p.quantityOnHand.toString()).lte(p.lowStockThreshold.toString())
-      ) {
-        lowStockCount++;
-      }
-    }
-
-    const recentJournalEntries = await prisma.journalEntry.findMany({
+      select: { id: true, code: true },
+    }),
+    InvoiceService.getOutstandingTotal(companyId),
+    ProductService.getInventoryMetrics(companyId),
+    prisma.journalEntry.findMany({
       where: { companyId },
       orderBy: { createdAt: "desc" },
       take: 5,
-      include: { lines: true },
-    });
+      select: {
+        id: true,
+        entryNumber: true,
+        description: true,
+        date: true,
+        lines: { select: { debit: true } },
+      },
+    }),
+  ]);
 
-    return {
-      revenue: revenue.toNumber(),
-      expenses: expenses.toNumber(),
-      profit: profit.toNumber(),
-      outstandingInvoices: Number(outstanding._sum.total ?? 0),
-      outstandingCount: outstanding._count,
-      inventoryValue: inventoryValue.toNumber(),
-      lowStockCount,
-      recentJournalEntries: recentJournalEntries.map((e) => ({
-        id: e.id,
-        entryNumber: e.entryNumber,
-        description: e.description,
-        date: e.date,
-        total: e.lines.reduce(
-          (sum, l) => sum + Number(l.debit),
-          0,
-        ),
-      })),
-    };
+  const byCode = Object.fromEntries(accounts.map((a) => [a.code, a.id]));
+
+  const [revenueGoods, revenueServices, cogs] = await Promise.all([
+    byCode[ACCOUNT_CODES.SALES_GOODS]
+      ? JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.SALES_GOODS])
+      : Promise.resolve(new Decimal(0)),
+    byCode[ACCOUNT_CODES.SALES_SERVICES]
+      ? JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.SALES_SERVICES])
+      : Promise.resolve(new Decimal(0)),
+    byCode[ACCOUNT_CODES.COGS]
+      ? JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.COGS])
+      : Promise.resolve(new Decimal(0)),
+  ]);
+
+  const revenue = revenueGoods.abs().plus(revenueServices.abs());
+  const expenses = cogs.abs();
+
+  return {
+    revenue: revenue.toNumber(),
+    expenses: expenses.toNumber(),
+    profit: revenue.minus(expenses).toNumber(),
+    outstandingInvoices: outstandingInvoices.total,
+    outstandingCount: outstandingInvoices.count,
+    inventoryValue: inventory.inventoryValue,
+    lowStockCount: inventory.lowStockCount,
+    productCount: inventory.productCount,
+    recentJournalEntries: recentJournalEntries.map((e) => ({
+      id: e.id,
+      entryNumber: e.entryNumber,
+      description: e.description,
+      date: e.date,
+      total: e.lines.reduce((sum, l) => sum + Number(l.debit), 0),
+    })),
+  };
+}
+
+export class DashboardService {
+  static getStats(companyId: string) {
+    return unstable_cache(
+      () => fetchDashboardStats(companyId),
+      [companyTag(companyId, CACHE_TAGS.dashboard)],
+      { revalidate: 30, tags: [companyTag(companyId, CACHE_TAGS.dashboard)] },
+    )();
   }
 
   static formatStats(stats: DashboardStats) {

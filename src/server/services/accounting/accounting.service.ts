@@ -1,15 +1,20 @@
 import { prisma } from "@/lib/prisma";
 import { ACCOUNT_CODES } from "@/lib/constants/accounts";
 import { JournalService } from "./journal.service";
-import type { JournalSourceType } from "@prisma/client";
+import type { JournalSourceType, Prisma } from "@prisma/client";
 
 /**
  * High-level accounting operations.
  * Maps business events → double-entry journal lines using Norwegian chart of accounts.
  */
 export class AccountingService {
-  static async getAccountByCode(companyId: string, code: string) {
-    const account = await prisma.account.findUnique({
+  static async getAccountByCode(
+    companyId: string,
+    code: string,
+    tx?: Prisma.TransactionClient,
+  ) {
+    const db = tx ?? prisma;
+    const account = await db.account.findUnique({
       where: { companyId_code: { companyId, code } },
     });
     if (!account) {
@@ -22,20 +27,24 @@ export class AccountingService {
    * Example: Manual opening balance or adjustment (Phase 1 foundation).
    * Invoice/expense/inventory flows will call JournalService in later phases.
    */
-  static async postManualEntry(params: {
-    companyId: string;
-    createdById: string;
-    date: Date;
-    description: string;
-    lines: { accountCode: string; debit?: number; credit?: number }[];
-    sourceId?: string;
-    sourceType?: JournalSourceType;
-  }) {
+  static async postManualEntry(
+    params: {
+      companyId: string;
+      createdById: string;
+      date: Date;
+      description: string;
+      lines: { accountCode: string; debit?: number; credit?: number }[];
+      sourceId?: string;
+      sourceType?: JournalSourceType;
+    },
+    tx?: Prisma.TransactionClient,
+  ) {
     const resolvedLines = await Promise.all(
       params.lines.map(async (line) => {
         const account = await AccountingService.getAccountByCode(
           params.companyId,
           line.accountCode,
+          tx,
         );
         return {
           accountId: account.id,
@@ -45,15 +54,18 @@ export class AccountingService {
       }),
     );
 
-    return JournalService.createEntry({
-      companyId: params.companyId,
-      createdById: params.createdById,
-      date: params.date,
-      description: params.description,
-      sourceType: params.sourceType ?? "MANUAL",
-      sourceId: params.sourceId,
-      lines: resolvedLines,
-    });
+    return JournalService.createEntry(
+      {
+        companyId: params.companyId,
+        createdById: params.createdById,
+        date: params.date,
+        description: params.description,
+        sourceType: params.sourceType ?? "MANUAL",
+        sourceId: params.sourceId,
+        lines: resolvedLines,
+      },
+      tx,
+    );
   }
 
   /**

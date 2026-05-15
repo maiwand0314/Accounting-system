@@ -1,3 +1,7 @@
+/**
+ * Beskytter app-ruter: uinnlogget bruker sendes til /logg-inn.
+ * Sesjon lagres via Supabase Auth (cookies) — fungerer likt lokalt og på Vercel.
+ */
 import { type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 

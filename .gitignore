@@ -30,8 +30,14 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# Miljøvariabler med hemmeligheter — ALDRI commit (inkl. .env.local)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Mal uten hemmeligheter — skal committes
+!.env.example
 
 # vercel
 .vercel

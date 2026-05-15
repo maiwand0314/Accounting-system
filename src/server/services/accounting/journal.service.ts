@@ -24,10 +24,13 @@ export type CreateJournalEntryInput = {
   lines: JournalLineInput[];
 };
 
+/**
+ * Regnskapsmotor: alle bilag går gjennom JournalService.
+ * Regel: sum(debet) = sum(kredit) for hvert bilag.
+ */
 export class JournalService {
   /**
-   * Core double-entry rule: total debits must equal total credits.
-   * Every business event (invoice, expense, payment, stock) posts through here.
+   * Validerer at bilaget er i balanse før det lagres.
    */
   static validateBalance(lines: JournalLineInput[]): void {
     let totalDebit = new Decimal(0);
@@ -49,9 +52,14 @@ export class JournalService {
     }
   }
 
-  static async nextEntryNumber(companyId: string, date: Date): Promise<string> {
+  static async nextEntryNumber(
+    companyId: string,
+    date: Date,
+    tx?: Prisma.TransactionClient,
+  ): Promise<string> {
+    const db = tx ?? prisma;
     const year = date.getFullYear();
-    const seq = await prisma.journalSequence.upsert({
+    const seq = await db.journalSequence.upsert({
       where: { companyId_year: { companyId, year } },
       create: { companyId, year, lastNumber: 1 },
       update: { lastNumber: { increment: 1 } },
@@ -70,6 +78,7 @@ export class JournalService {
     const entryNumber = await JournalService.nextEntryNumber(
       input.companyId,
       input.date,
+      tx,
     );
 
     return db.journalEntry.create({

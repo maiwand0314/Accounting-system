@@ -1,4 +1,5 @@
-// Regnskap & Lager MVP — single-company, multi-tenant-ready (companyId on all entities)
+// Regnskap & Lager — én bedrift per installasjon (companyId på alle tabeller for fremtidig SaaS).
+// Data persisteres i Supabase PostgreSQL; Vercel hoster kun Next.js-appen.
 
 generator client {
   provider = "prisma-client-js"
