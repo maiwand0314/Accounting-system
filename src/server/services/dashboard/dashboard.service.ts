@@ -58,18 +58,17 @@ async function fetchDashboardStats(companyId: string): Promise<DashboardStats> {
   ]);
 
   const byCode = Object.fromEntries(accounts.map((a) => [a.code, a.id]));
+  const balanceMap = await JournalService.getBalanceMap(companyId);
 
-  const [revenueGoods, revenueServices, cogs] = await Promise.all([
-    byCode[ACCOUNT_CODES.SALES_GOODS]
-      ? JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.SALES_GOODS])
-      : Promise.resolve(new Decimal(0)),
-    byCode[ACCOUNT_CODES.SALES_SERVICES]
-      ? JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.SALES_SERVICES])
-      : Promise.resolve(new Decimal(0)),
-    byCode[ACCOUNT_CODES.COGS]
-      ? JournalService.getAccountBalance(companyId, byCode[ACCOUNT_CODES.COGS])
-      : Promise.resolve(new Decimal(0)),
-  ]);
+  const revenueGoods = byCode[ACCOUNT_CODES.SALES_GOODS]
+    ? balanceMap.get(byCode[ACCOUNT_CODES.SALES_GOODS]) ?? new Decimal(0)
+    : new Decimal(0);
+  const revenueServices = byCode[ACCOUNT_CODES.SALES_SERVICES]
+    ? balanceMap.get(byCode[ACCOUNT_CODES.SALES_SERVICES]) ?? new Decimal(0)
+    : new Decimal(0);
+  const cogs = byCode[ACCOUNT_CODES.COGS]
+    ? balanceMap.get(byCode[ACCOUNT_CODES.COGS]) ?? new Decimal(0)
+    : new Decimal(0);
 
   const revenue = revenueGoods.abs().plus(revenueServices.abs());
   const expenses = cogs.abs();

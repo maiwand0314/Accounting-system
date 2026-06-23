@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   FileText,
@@ -35,6 +35,7 @@ const navItems: {
 
 export function Sidebar({ userRole }: { userRole: UserRole }) {
   const pathname = usePathname();
+  const router = useRouter();
 
   return (
     <aside className="flex h-full w-64 flex-col border-r border-border bg-sidebar">
@@ -56,6 +57,9 @@ export function Sidebar({ userRole }: { userRole: UserRole }) {
             <Link
               key={item.href}
               href={item.href}
+              prefetch
+              onMouseEnter={() => router.prefetch(item.href)}
+              onFocus={() => router.prefetch(item.href)}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 active

@@ -13,6 +13,6 @@ export function useExpenses(page: number, year?: number) {
       return res.json();
     },
     placeholderData: keepPreviousData,
-    staleTime: 15_000,
+    staleTime: 30_000,
   });
 }

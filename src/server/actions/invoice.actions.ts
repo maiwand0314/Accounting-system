@@ -14,11 +14,19 @@ export type ActionResult<T = void> =
   | { success: true; data?: T }
   | { success: false; error: string };
 
-function revalidateInvoices() {
+function revalidateInvoices(invoiceId?: string) {
   revalidatePath("/fakturaer");
   revalidatePath("/dashboard");
   revalidatePath("/bilag");
   revalidatePath("/produkter");
+  if (invoiceId) revalidatePath(`/fakturaer/${invoiceId}`);
+}
+
+function revalidateInvoicePayment(invoiceId: string) {
+  revalidatePath("/fakturaer");
+  revalidatePath(`/fakturaer/${invoiceId}`);
+  revalidatePath("/dashboard");
+  revalidatePath("/bilag");
 }
 
 export async function createCustomerAction(
@@ -109,7 +117,7 @@ export async function sendInvoiceAction(invoiceId: string): Promise<ActionResult
       userId: session.id,
       invoiceId,
     });
-    revalidateInvoices();
+    revalidateInvoices(invoiceId);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Kunne ikke sende faktura" };
@@ -128,7 +136,7 @@ export async function markInvoicePaidAction(invoiceId: string): Promise<ActionRe
       userId: session.id,
       invoiceId,
     });
-    revalidateInvoices();
+    revalidateInvoicePayment(invoiceId);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Kunne ikke registrere betaling" };

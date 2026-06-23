@@ -25,7 +25,7 @@ export function ExpenseList({
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const year = new Date().getFullYear();
-  const { data, isLoading } = useExpenses(page, year);
+  const { data, isLoading, isFetching } = useExpenses(page, year);
 
   return (
     <div className="space-y-4">
@@ -47,7 +47,7 @@ export function ExpenseList({
               <th className="px-4 py-3 text-right font-medium">Total</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className={isFetching && !isLoading ? "opacity-60 transition-opacity" : undefined}>
             {isLoading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <tr key={i}>
@@ -111,6 +111,7 @@ export function ExpenseList({
             variant="outline"
             size="sm"
             disabled={page >= data.totalPages}
+            loading={isFetching}
             onClick={() => setPage((p) => p + 1)}
           >
             Neste

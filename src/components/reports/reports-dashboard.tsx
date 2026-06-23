@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { requireRole } from "@/lib/auth/session";
 import { PERMISSIONS } from "@/lib/constants/roles";
 import { ReportsService } from "@/server/services/reports/reports.service";
@@ -6,11 +7,17 @@ import { formatNOK } from "@/lib/utils";
 import { GeneralLedgerPreview } from "./general-ledger-preview";
 import { BalanceSheetSection } from "./balance-sheet-section";
 
+function SectionSkeleton({ height = "h-40" }: { height?: string }) {
+  return <div className={`${height} animate-pulse rounded-xl bg-muted`} />;
+}
+
 export async function ReportsDashboard() {
   const session = await requireRole(PERMISSIONS.viewReports);
   const year = new Date().getFullYear();
-  const data = await ReportsService.getDashboardReports(session.companyId);
-  const trialBalance = await ReportsService.getTrialBalance(session.companyId);
+  const [data, trialBalance] = await Promise.all([
+    ReportsService.getDashboardReports(session.companyId),
+    ReportsService.getTrialBalance(session.companyId),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -68,7 +75,9 @@ export async function ReportsDashboard() {
         </Card>
       </section>
 
-      <BalanceSheetSection companyId={session.companyId} />
+      <Suspense fallback={<SectionSkeleton height="h-56" />}>
+        <BalanceSheetSection companyId={session.companyId} />
+      </Suspense>
 
       <section>
         <h2 className="mb-4 text-lg font-semibold">MVA-oppstilling {year}</h2>
@@ -181,7 +190,9 @@ export async function ReportsDashboard() {
         </Card>
       </section>
 
-      <GeneralLedgerPreview companyId={session.companyId} />
+      <Suspense fallback={<SectionSkeleton />}>
+        <GeneralLedgerPreview companyId={session.companyId} />
+      </Suspense>
     </div>
   );
 }

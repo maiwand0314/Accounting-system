@@ -104,50 +104,73 @@ export class JournalService {
     });
   }
 
-  /** Account balance = sum(debit) - sum(credit) for asset/expense; reversed for liability/equity/revenue */
-  static async getAccountBalance(
+  private static journalLineFilter(
     companyId: string,
-    accountId: string,
     asOf?: Date,
-  ): Promise<Decimal> {
-    const where: Prisma.JournalLineWhereInput = {
-      accountId,
+    accountId?: string,
+  ): Prisma.JournalLineWhereInput {
+    return {
+      ...(accountId ? { accountId } : {}),
       journalEntry: {
         companyId,
         isPosted: true,
         ...(asOf ? { date: { lte: asOf } } : {}),
       },
     };
+  }
 
-    const lines = await prisma.journalLine.findMany({ where });
-    let balance = new Decimal(0);
-    for (const line of lines) {
-      balance = balance.plus(line.debit).minus(line.credit);
+  /** Account balance = sum(debit) - sum(credit) */
+  static async getAccountBalance(
+    companyId: string,
+    accountId: string,
+    asOf?: Date,
+  ): Promise<Decimal> {
+    const agg = await prisma.journalLine.aggregate({
+      where: JournalService.journalLineFilter(companyId, asOf, accountId),
+      _sum: { debit: true, credit: true },
+    });
+    return new Decimal(agg._sum.debit ?? 0).minus(agg._sum.credit ?? 0);
+  }
+
+  /** All account balances in one query — used by reports and trial balance */
+  static async getBalanceMap(
+    companyId: string,
+    asOf?: Date,
+  ): Promise<Map<string, Decimal>> {
+    const groups = await prisma.journalLine.groupBy({
+      by: ["accountId"],
+      where: JournalService.journalLineFilter(companyId, asOf),
+      _sum: { debit: true, credit: true },
+    });
+
+    const map = new Map<string, Decimal>();
+    for (const group of groups) {
+      map.set(
+        group.accountId,
+        new Decimal(group._sum.debit ?? 0).minus(group._sum.credit ?? 0),
+      );
     }
-    return balance;
+    return map;
   }
 
   static async getTrialBalance(companyId: string, asOf?: Date) {
-    const accounts = await prisma.account.findMany({
-      where: { companyId, isActive: true },
-      orderBy: { code: "asc" },
-    });
+    const [accounts, balanceMap] = await Promise.all([
+      prisma.account.findMany({
+        where: { companyId, isActive: true },
+        orderBy: { code: "asc" },
+      }),
+      JournalService.getBalanceMap(companyId, asOf),
+    ]);
 
-    const rows = await Promise.all(
-      accounts.map(async (account) => {
-        const balance = await JournalService.getAccountBalance(
-          companyId,
-          account.id,
-          asOf,
-        );
+    return accounts
+      .map((account) => {
+        const balance = balanceMap.get(account.id) ?? new Decimal(0);
         return {
           account,
           debit: balance.gt(0) ? balance.toNumber() : 0,
           credit: balance.lt(0) ? balance.abs().toNumber() : 0,
         };
-      }),
-    );
-
-    return rows.filter((r) => r.debit !== 0 || r.credit !== 0);
+      })
+      .filter((row) => row.debit !== 0 || row.credit !== 0);
   }
 }

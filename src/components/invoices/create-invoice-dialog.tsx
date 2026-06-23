@@ -67,9 +67,20 @@ export function CreateInvoiceDialog({
   useEffect(() => {
     if (customerState.success) {
       queryClient.invalidateQueries({ queryKey: ["customers"] });
-      setShowNewCustomer(false);
     }
   }, [customerState.success, queryClient]);
+
+  if (customerState.success && showNewCustomer) {
+    setShowNewCustomer(false);
+  }
+
+  const [{ today, due }] = useState(() => {
+    const now = new Date();
+    return {
+      today: now.toISOString().slice(0, 10),
+      due: new Date(now.getTime() + 14 * 86400000).toISOString().slice(0, 10),
+    };
+  });
 
   if (!open) return null;
 
@@ -77,9 +88,6 @@ export function CreateInvoiceDialog({
   const subtotal = calculated.reduce((s, l) => s + l.lineTotal, 0);
   const vat = calculated.reduce((s, l) => s + l.vatAmount, 0);
   const total = subtotal + vat;
-
-  const today = new Date().toISOString().slice(0, 10);
-  const due = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
 
   function addProductLine(productId: string) {
     const p = products?.find((x) => x.id === productId);

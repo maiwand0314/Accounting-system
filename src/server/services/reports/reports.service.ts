@@ -19,20 +19,11 @@ export class ReportsService {
       orderBy: { code: "asc" },
     });
 
-    const rows = await Promise.all(
-      accounts.map(async (account) => {
-        const balance = await JournalService.getAccountBalance(
-          companyId,
-          account.id,
-          asOf,
-        );
-        const amount =
-          account.type === "REVENUE"
-            ? balance.abs().toNumber()
-            : balance.abs().toNumber();
-        return { account, amount };
-      }),
-    );
+    const balanceMap = await JournalService.getBalanceMap(companyId, asOf);
+    const rows = accounts.map((account) => {
+      const balance = balanceMap.get(account.id) ?? new Decimal(0);
+      return { account, amount: balance.abs().toNumber() };
+    });
 
     const revenue = rows
       .filter((r) => r.account.type === "REVENUE")
@@ -65,8 +56,10 @@ export class ReportsService {
     };
     const rows: Row[] = [];
 
+    const balanceMap = await JournalService.getBalanceMap(companyId, asOf);
+
     for (const account of accounts) {
-      const bal = await JournalService.getAccountBalance(companyId, account.id, asOf);
+      const bal = balanceMap.get(account.id) ?? new Decimal(0);
       let balance = bal.toNumber();
       if (account.type === "LIABILITY" || account.type === "EQUITY") {
         balance = bal.negated().toNumber();
@@ -124,37 +117,24 @@ export class ReportsService {
   }
 
   static async getVatSummary(companyId: string, year: number) {
-    const from = new Date(year, 0, 1);
     const to = new Date(year, 11, 31);
 
-    const [outputAccount, inputAccount] = await Promise.all([
+    const [outputAccount, inputAccount, balanceMap] = await Promise.all([
       prisma.account.findUnique({
         where: { companyId_code: { companyId, code: ACCOUNT_CODES.OUTPUT_VAT } },
       }),
       prisma.account.findUnique({
         where: { companyId_code: { companyId, code: ACCOUNT_CODES.INPUT_VAT } },
       }),
+      JournalService.getBalanceMap(companyId, to),
     ]);
 
-    let outputVat = 0;
-    let inputVat = 0;
-
-    if (outputAccount) {
-      const bal = await JournalService.getAccountBalance(
-        companyId,
-        outputAccount.id,
-        to,
-      );
-      outputVat = bal.abs().toNumber();
-    }
-    if (inputAccount) {
-      const bal = await JournalService.getAccountBalance(
-        companyId,
-        inputAccount.id,
-        to,
-      );
-      inputVat = bal.abs().toNumber();
-    }
+    const outputVat = outputAccount
+      ? (balanceMap.get(outputAccount.id) ?? new Decimal(0)).abs().toNumber()
+      : 0;
+    const inputVat = inputAccount
+      ? (balanceMap.get(inputAccount.id) ?? new Decimal(0)).abs().toNumber()
+      : 0;
 
     return {
       year,

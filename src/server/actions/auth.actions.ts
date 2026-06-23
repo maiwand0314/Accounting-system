@@ -37,6 +37,12 @@ export async function loginAction(
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
 
   if (error) {
+    if (error.message.toLowerCase().includes("email not confirmed")) {
+      return {
+        error:
+          "E-posten er ikke bekreftet. Sjekk innboksen (og søppelpost) for bekreftelseslenke, eller slå av «Confirm email» i Supabase under Authentication → Providers → Email.",
+      };
+    }
     return { error: "Feil e-post eller passord" };
   }
 

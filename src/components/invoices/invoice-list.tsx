@@ -1,9 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, FileText } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useInvoices } from "@/lib/hooks/use-invoices";
+import {
+  customerKeys,
+  fetchCustomers,
+  fetchInvoices,
+  fetchProductsForInvoice,
+  invoiceKeys,
+  productKeys,
+} from "@/lib/queries/keys";
 import { formatDateNO, formatNOK } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { InvoiceStatusBadge } from "./invoice-status-badge";
@@ -24,11 +33,41 @@ const STATUS_FILTERS: { value: "" | InvoiceStatus; label: string }[] = [
 ];
 
 export function InvoiceList() {
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<"" | InvoiceStatus>("");
   const [showCreate, setShowCreate] = useState(false);
 
-  const { data, isLoading } = useInvoices(page, status);
+  const { data, isLoading, isFetching } = useInvoices(page, status);
+
+  useEffect(() => {
+    void queryClient.prefetchQuery({
+      queryKey: customerKeys.list(),
+      queryFn: () => fetchCustomers(),
+    });
+    void queryClient.prefetchQuery({
+      queryKey: productKeys.invoice,
+      queryFn: fetchProductsForInvoice,
+    });
+  }, [queryClient]);
+
+  function prefetchPage(nextPage: number) {
+    void queryClient.prefetchQuery({
+      queryKey: invoiceKeys.list(nextPage, status),
+      queryFn: () => fetchInvoices(nextPage, status),
+    });
+  }
+
+  function prefetchCreateData() {
+    void queryClient.prefetchQuery({
+      queryKey: customerKeys.list(),
+      queryFn: () => fetchCustomers(),
+    });
+    void queryClient.prefetchQuery({
+      queryKey: productKeys.invoice,
+      queryFn: fetchProductsForInvoice,
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -48,7 +87,11 @@ export function InvoiceList() {
             </Button>
           ))}
         </div>
-        <Button onClick={() => setShowCreate(true)}>
+        <Button
+          onMouseEnter={prefetchCreateData}
+          onFocus={prefetchCreateData}
+          onClick={() => setShowCreate(true)}
+        >
           <Plus className="h-4 w-4" />
           Ny faktura
         </Button>
@@ -65,7 +108,7 @@ export function InvoiceList() {
               <th className="px-4 py-3 text-right font-medium">Beløp</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className={isFetching && !isLoading ? "opacity-60 transition-opacity" : undefined}>
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i}>
@@ -118,13 +161,21 @@ export function InvoiceList() {
 
       {data && data.totalPages > 1 && (
         <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onMouseEnter={() => prefetchPage(page - 1)}
+            onClick={() => setPage((p) => p - 1)}
+          >
             Forrige
           </Button>
           <Button
             variant="outline"
             size="sm"
             disabled={page >= data.totalPages}
+            loading={isFetching}
+            onMouseEnter={() => prefetchPage(page + 1)}
             onClick={() => setPage((p) => p + 1)}
           >
             Neste

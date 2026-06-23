@@ -32,7 +32,7 @@ export function useProducts(search: string, page: number) {
       }>;
     },
     placeholderData: keepPreviousData,
-    staleTime: 15_000,
+    staleTime: 30_000,
   });
 }
 
@@ -47,6 +47,6 @@ export function useMovements(page: number, productId?: string) {
       return res.json();
     },
     placeholderData: keepPreviousData,
-    staleTime: 15_000,
+    staleTime: 30_000,
   });
 }

@@ -14,9 +14,17 @@ function SummarySkeleton() {
   );
 }
 
+function TabsSkeleton() {
+  return <div className="h-96 animate-pulse rounded-xl bg-muted" />;
+}
+
+async function ProductsTabsLoader({ companyId }: { companyId: string }) {
+  const categories = await ProductService.getCategories(companyId);
+  return <ProductsTabs categories={categories} />;
+}
+
 export default async function ProdukterPage() {
   const session = await requireSession();
-  const categories = await ProductService.getCategories(session.companyId);
 
   return (
     <div className="space-y-6">
@@ -31,7 +39,9 @@ export default async function ProdukterPage() {
         <InventorySummary companyId={session.companyId} />
       </Suspense>
 
-      <ProductsTabs categories={categories} />
+      <Suspense fallback={<TabsSkeleton />}>
+        <ProductsTabsLoader companyId={session.companyId} />
+      </Suspense>
     </div>
   );
 }
